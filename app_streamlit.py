@@ -761,12 +761,11 @@ def main():
     
     
     # Pied de page
-    st.markdown("""
-    <div class="footer">
-            Modèles : Random Forest (F1: 0.534) • Régression Logistique Ordinale (AIC: 38.2)
-        </p>
+st.markdown("""
+    <div style="text-align:center; margin-top:30px; font-size:14px; color:gray;">
+        Modèles : Random Forest (F1: 0.534) • Régression Logistique Ordinale (AIC: 38.2)
     </div>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
