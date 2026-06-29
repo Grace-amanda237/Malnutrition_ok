@@ -1,10 +1,15 @@
-# 1. Imports
+# app_streamlit.py
+# Application Streamlit pour l'étude de la malnutrition au Cameroun
+# Support Parquet
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import json, os, pickle
+import json
+import os
+import pickle
 from scipy import stats
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.decomposition import PCA
@@ -17,28 +22,15 @@ from sklearn.metrics import (
 )
 import warnings
 warnings.filterwarnings('ignore')
-sns.set_theme(style="whitegrid")
 
-# 2. Configuration de la page
+# Configuration de la page
 st.set_page_config(
     page_title="Étude Malnutrition Cameroun",
     page_icon="📊",
     layout="wide"
 )
 
-# 3. Fonctions utilitaires
-def format_value(val, fmt="{:.4f}"):
-    """Formate val si c'est un nombre, sinon renvoie la chaîne brute."""
-    if isinstance(val, (int, float)):
-        return fmt.format(val)
-    return str(val)
-
-# 4. Layout fixe
-st.title("Analyse de la malnutrition lié au poids chez les adultes au Cameroun")
-col1, col2 = st.columns(2)
-
-
-# --- Style CSS personnalisé ---
+# --- Style CSS ---
 st.markdown("""
 <style>
     .main-header {
@@ -59,25 +51,6 @@ st.markdown("""
         padding: 0.5rem 1rem;
         background-color: #eaf2f8;
         border-radius: 8px;
-    }
-    .subsection-header {
-        font-size: 1.3rem;
-        font-weight: bold;
-        color: #2c3e50;
-        margin-top: 1.5rem;
-        margin-bottom: 0.8rem;
-    }
-    .stat-box {
-        background-color: #f0f3f5;
-        padding: 1rem;
-        border-radius: 8px;
-        border-left: 4px solid #1a5276;
-        margin: 0.5rem 0;
-    }
-    .stat-value {
-        font-size: 1.5rem;
-        font-weight: bold;
-        color: #1a5276;
     }
     .insight-box {
         background-color: #fef9e7;
@@ -113,119 +86,103 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- Variables globales ---
+TARGET_VARS = [
+    'CASEID', 'V012', 'V013', 'V025', 'V024', 'V106', 'V107', 'V133',
+    'V130', 'V131', 'V190', 'V191', 'V501', 'V502', 'V437', 'V438',
+    'V445', 'V463A', 'V463AA', 'V201', 'V213', 'V714', 'V745A',
+    'V157', 'V158', 'V159', 'V136', 'V137', 'V155', 'V717',
+    'V113', 'V116'
+]
+
 # --- Fonctions de chargement ---
 @st.cache_data
 def load_table(filename):
     """Charge une table CSV"""
-    path = os.path.join('tables', filename)
-    if os.path.exists(path):
-        try:
-            return pd.read_csv(path)
-        except:
-            return None
+    # Chercher dans le dossier tables/
+    paths = [
+        os.path.join('tables', filename),
+        filename
+    ]
+    for path in paths:
+        if os.path.exists(path):
+            try:
+                return pd.read_csv(path)
+            except:
+                continue
     return None
 
 @st.cache_data
 def load_json(filename):
     """Charge un fichier JSON"""
-    path = os.path.join('tables', filename)
-    if os.path.exists(path):
-        with open(path, 'r') as f:
-            return json.load(f)
+    paths = [
+        os.path.join('tables', filename),
+        filename
+    ]
+    for path in paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                continue
     return None
 
 @st.cache_data
 def load_text(filename):
     """Charge un fichier texte"""
-    path = os.path.join('tables', filename)
-    if os.path.exists(path):
-        with open(path, 'r') as f:
-            return f.read()
+    paths = [
+        os.path.join('tables', filename),
+        filename
+    ]
+    for path in paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    return f.read()
+            except:
+                continue
     return None
 
 @st.cache_resource
 def load_model(filename):
     """Charge un modèle pickle"""
-    path = os.path.join('models', filename)
-    if os.path.exists(path):
-        with open(path, 'rb') as f:
-            return pickle.load(f)
+    paths = [
+        os.path.join('models', filename),
+        filename
+    ]
+    for path in paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'rb') as f:
+                    return pickle.load(f)
+            except:
+                continue
     return None
 
-
-TARGET_VARS = [
-    'CASEID','V012','V013','V025','V024','V106','V107','V133',
-    'V130','V131','V190','V191','V501','V502','V437','V438',
-    'V445','V463A','V463AA','V201','V213','V714','V745A',
-    'V157','V158','V159','V136','V137','V155','V717',
-    'V113','V116'
-]
-
-#  Fonction de catégorisation IMC
-def categorize_imc(imc):
-    if imc < 18.5:
-        return "Maigreur"
-    elif imc < 25:
-        return "Normal"
-    elif imc < 30:
-        return "Surpoids"
-    else:
-        return "Obésité"
-
-#  Fonction de chargement et prétraitement
+# --- Fonction de chargement des données ---
+@st.cache_data
 def load_and_preprocess_data():
+    """Charge et prétraite les données DHS"""
     try:
-        # Lecture du fichier Parquet
+        # Essayer de lire le fichier Parquet
         df = pd.read_parquet("CMIR71FL.parquet")
         df = df[TARGET_VARS]
-
-        # Création de l'IMC
-        if "V437" in df.columns and "V438" in df.columns:
-            df["imc"] = df["V437"] / (df["V438"] / 100) ** 2
-            df["imc_classe"] = df["imc"].apply(categorize_imc)
-            df["imc_classe_label"] = df["imc_classe"]
-
-        # Milieu de résidence
-        if "V025" in df.columns:
-            df["milieu"] = df["V025"].map({1: "Urbain", 2: "Rural"})
-
-        # Colonnes dérivées
-        if "V012" in df.columns:
-            df["age"] = df["V012"]   # âge en années
-        if "V106" in df.columns:
-            df["education"] = df["V106"]  # niveau d’éducation
-        if "V190" in df.columns:
-            df["richesse"] = df["V190"]   # quintile de richesse
-
-        st.success(" Dataset chargé avec succès")
-        return df
-
-    except FileNotFoundError:
-        st.warning("⚠️ Fichier Parquet introuvable. Merci d'uploader le CSV.")
-        uploaded_file = st.file_uploader("Uploader le fichier CMIR71FL.csv", type="csv")
-        if uploaded_file is not None:
-            df = pd.read_csv(uploaded_file, usecols=TARGET_VARS, low_memory=False)
-
-            if "V437" in df.columns and "V438" in df.columns:
-                df["imc"] = df["V437"] / (df["V438"] / 100) ** 2
-                df["imc_classe"] = df["imc"].apply(categorize_imc)
-                df["imc_classe_label"] = df["imc_classe"]
-
-            if "V025" in df.columns:
-                df["milieu"] = df["V025"].map({1: "Urbain", 2: "Rural"})
-
-            if "V012" in df.columns:
-                df["age"] = df["V012"]
-            if "V106" in df.columns:
-                df["education"] = df["V106"]
-            if "V190" in df.columns:
-                df["richesse"] = df["V190"]
-
-            st.success(" Fichier CSV chargé avec succès")
-            return df
-        return None
-    df = pd.read_parquet('CMIR71FL.parquet', usecols=TARGET_VARS, low_memory=False)
+        st.info("📂 Fichier Parquet chargé avec succès")
+    except:
+        try:
+            # Essayer de lire le fichier CSV
+            df = pd.read_csv("CMIR71FL.csv", usecols=TARGET_VARS, low_memory=False)
+            st.info("📂 Fichier CSV chargé avec succès")
+        except FileNotFoundError:
+            st.warning("⚠️ Aucun fichier de données trouvé. Veuillez uploader le fichier.")
+            uploaded_file = st.file_uploader("Uploader le fichier CMIR71FL.csv", type="csv")
+            if uploaded_file is not None:
+                df = pd.read_csv(uploaded_file, usecols=TARGET_VARS, low_memory=False)
+            else:
+                return None
     
+    # Renommage
     RENAME = {
         'V012': 'age', 'V013': 'age_groupe', 'V024': 'region',
         'V025': 'milieu', 'V106': 'education', 'V107': 'annees_etudes',
@@ -240,22 +197,41 @@ def load_and_preprocess_data():
         'V136': 'taille_menage', 'V137': 'enfants_moins_5ans',
         'V155': 'alphabetisation', 'V717': 'occupation_groupe'
     }
-    df = df.rename(columns=RENAME)
     
+    # Appliquer le renommage
+    existing_rename = {k: v for k, v in RENAME.items() if k in df.columns}
+    df = df.rename(columns=existing_rename)
+    
+    # Nettoyage des codes spéciaux
     for col in df.columns:
         if df[col].dtype in ['float64', 'int64'] and col not in ['CASEID', 'richesse_score', 'imc_dhs', 'poids_kg10', 'taille_cm10']:
             df[col] = df[col].replace([99, 999, 9998, 9999], np.nan)
     
-    df['imc'] = df['imc_dhs'] / 100.0
+    # Calcul IMC
+    if 'imc_dhs' in df.columns:
+        df['imc'] = df['imc_dhs'] / 100.0
+    elif 'V445' in df.columns:
+        df['imc'] = df['V445'] / 100.0
+    else:
+        df['imc'] = np.nan
+    
+    # Si l'IMC est manquant, le calculer à partir du poids et de la taille
+    if 'poids_kg10' in df.columns and 'taille_cm10' in df.columns:
+        df['poids_kg'] = df['poids_kg10'] / 10.0
+        df['taille_m'] = df['taille_cm10'] / 1000.0
+        mask = df['imc'].isna() & df['poids_kg'].between(25, 200) & df['taille_m'].between(1.2, 2.2)
+        df.loc[mask, 'imc'] = df.loc[mask, 'poids_kg'] / df.loc[mask, 'taille_m']**2
+    
+    # Nettoyage IMC
     df.loc[~df['imc'].between(12, 60), 'imc'] = np.nan
     
-    df['poids_kg'] = df['poids_kg10'] / 10.0
-    df['taille_m'] = df['taille_cm10'] / 1000.0
-    mask = df['imc'].isna() & df['poids_kg'].between(25, 200) & df['taille_m'].between(1.2, 2.2)
-    df.loc[mask, 'imc'] = df.loc[mask, 'poids_kg'] / df.loc[mask, 'taille_m']**2
+    # Exclusion des femmes enceintes
+    if 'enceinte' in df.columns:
+        df = df[df['imc'].between(12, 60) & (df['enceinte'] != 1)].copy()
+    else:
+        df = df[df['imc'].between(12, 60)].copy()
     
-    df = df[df['imc'].between(12, 60) & (df['enceinte'] != 1)].copy()
-    
+    # Classification IMC
     def classe(imc):
         if imc < 18.5:
             return 0
@@ -271,6 +247,7 @@ def load_and_preprocess_data():
         0: 'Maigreur', 1: 'Normal', 2: 'Surpoids', 3: 'Obésité'
     })
     
+    # Imputation des variables manquantes
     FEATURES = [
         'age', 'milieu', 'education', 'annees_education_unique',
         'richesse', 'richesse_score', 'fume_actuel', 'enfants_total',
@@ -284,71 +261,71 @@ def load_and_preprocess_data():
             if df[col].dtype == 'float64' and df[col].nunique() > 6:
                 df[col] = df[col].fillna(df[col].median())
             else:
-                df[col] = df[col].fillna(df[col].mode().iloc[0] if len(df[col].mode()) > 0 else 0)
+                if len(df[col].mode()) > 0:
+                    df[col] = df[col].fillna(df[col].mode().iloc[0])
     
     return df
 
-# --- Fonction d'affichage des tables ---
+# --- Fonctions d'affichage ---
 def display_table_with_insight(df, title, insight=None):
     """Affiche une table avec une interprétation"""
     st.markdown(f"### {title}")
-    
     if df is not None and not df.empty:
         st.dataframe(df, use_container_width=True)
-        
         if insight:
             st.markdown(f"""
             <div class="insight-box">
-                <strong> Interprétation :</strong> {insight}
+                <strong>💡 Interprétation :</strong> {insight}
             </div>
             """, unsafe_allow_html=True)
     else:
         st.info("Table non disponible")
 
-# --- Fonction d'affichage des modèles ---
 def display_model_info():
     """Affiche les informations sur les modèles disponibles"""
     st.markdown("""
     <div class="insight-box">
-        <strong> Modèles disponibles :</strong><br>
+        <strong>🤖 Modèles disponibles :</strong><br>
         • <strong>best_model_compact.pkl</strong> — Random Forest optimisé (F1 macro: 0.534)<br>
         • <strong>ordinal_logit.pkl</strong> — Régression Logistique Ordinale (AIC: 38.2)<br>
         • <strong>scaler.pkl</strong> — StandardScaler pour normalisation des données
     </div>
     """, unsafe_allow_html=True)
 
-# --- Interface Streamlit ---
-
+# --- Interface principale ---
 def main():
     # En-tête
-    st.markdown('<div class="main-header"> facteurs determinant de la malnutrition lié au poids chez les adultes</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">📊 Facteurs déterminants de la malnutrition liée au poids chez les adultes</div>', unsafe_allow_html=True)
     st.markdown('*Données DHS Cameroun 2018 — Analyse anthropométrique et socio-démographique*')
     
     # Chargement des données
     with st.spinner('Chargement des données...'):
         df = load_and_preprocess_data()
     
-    st.success(f" Données chargées : {len(df):,} femmes incluses dans l'analyse")
+    if df is None:
+        st.error("❌ Impossible de charger les données. Veuillez vérifier le fichier.")
+        return
     
-    # Sidebar de navigation
-    st.sidebar.title(" Navigation")
+    st.success(f"✅ Données chargées : {len(df):,} femmes incluses dans l'analyse")
+    
+    # Sidebar
+    st.sidebar.title("📋 Navigation")
     sections = [
-        " Accueil",
-        " Analyse Descriptive",
-        " Analyse Bivariée",
-        " Tests d'Hypothèses",
-        " Analyse Multivariée",
-        " Modèles ML",
-        " Prédiction",
+        "🏠 Accueil",
+        "📊 Analyse Descriptive",
+        "📈 Analyse Bivariée",
+        "🔬 Tests d'Hypothèses",
+        "🎯 Analyse Multivariée",
+        "🤖 Modèles ML",
+        "📋 Prédiction"
     ]
     selected_section = st.sidebar.radio("Aller à :", sections)
     
-    # Section: Accueil
-    if selected_section == " Accueil":
-        st.markdown('<div class="section-header"> Présentation de l\'Étude</div>', unsafe_allow_html=True)
+    # --- SECTION: ACCUEIL ---
+    if selected_section == "🏠 Accueil":
+        st.markdown('<div class="section-header">🏠 Présentation de l\'Étude</div>', unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
-        
         with col1:
             st.markdown("""
             ### Contexte
@@ -360,50 +337,52 @@ def main():
             - Identifier les facteurs socio-démographiques associés
             - Développer un modèle prédictif de la classe IMC
             """)
-            
         with col2:
-            st.markdown("""
-            ### Indicateurs clés
-            """)
+            st.markdown("### Indicateurs clés")
             col2a, col2b = st.columns(2)
             with col2a:
                 st.metric("👩 Effectif", f"{len(df):,}")
-                st.metric(" IMC moyen", f"{df['imc'].mean():.1f} kg/m²")
+                st.metric("📊 IMC moyen", f"{df['imc'].mean():.1f} kg/m²")
             with col2b:
-                st.metric("🏙️ Urbaines", f"{len(df[df['milieu']==1]):,}")
-                st.metric("🌾 Rurales", f"{len(df[df['milieu']==2]):,}")
+                urbain = len(df[df['milieu']==1]) if 'milieu' in df.columns else 0
+                rural = len(df[df['milieu']==2]) if 'milieu' in df.columns else 0
+                st.metric("🏙️ Urbaines", f"{urbain:,}")
+                st.metric("🌾 Rurales", f"{rural:,}")
         
-        # Distribution des classes IMC
+        # Distribution des classes
         st.markdown("### Distribution des classes IMC")
-        class_counts = df['imc_classe_label'].value_counts()
-        class_pcts = (class_counts / len(df) * 100).round(1)
+        if 'imc_classe_label' in df.columns:
+            class_counts = df['imc_classe_label'].value_counts()
+            class_pcts = (class_counts / len(df) * 100).round(1)
+            cols = st.columns(4)
+            for i, (cls, count) in enumerate(class_counts.items()):
+                if i < 4:
+                    with cols[i]:
+                        st.metric(label=cls, value=f"{count:,}", delta=f"{class_pcts[cls]:.1f}%")
         
-        cols = st.columns(4)
-        for i, (cls, count) in enumerate(class_counts.items()):
-            with cols[i]:
-                st.metric(
-                    label=cls,
-                    value=f"{count:,}",
-                    delta=f"{class_pcts[cls]:.1f}%"
-                )
-        
-        # Modèles disponibles
-        st.markdown("### Modèles disponibles")
         display_model_info()
-        
-        # Aperçu des données
         st.markdown("### Aperçu des données")
-        st.dataframe(df[['age', 'milieu', 'education', 'richesse', 'imc', 'imc_classe_label']].head(10))
+        cols_to_show = ['age', 'milieu', 'education', 'richesse', 'imc', 'imc_classe_label']
+        available_cols = [c for c in cols_to_show if c in df.columns]
+        st.dataframe(df[available_cols].head(10))
     
-    # Section: Analyse Descriptive
-    elif selected_section == " Analyse Descriptive":
-        st.markdown('<div class="section-header"> Analyse Descriptive</div>', unsafe_allow_html=True)
+    # --- SECTION: ANALYSE DESCRIPTIVE ---
+    elif selected_section == "📊 Analyse Descriptive":
+        st.markdown('<div class="section-header">📊 Analyse Descriptive</div>', unsafe_allow_html=True)
         
-        tab1, tab2, tab3 = st.tabs([" Statistiques IMC", " Distribution", " Tables"])
+        tab1, tab2, tab3 = st.tabs(["📊 Statistiques IMC", "📈 Distribution", "📋 Tables"])
         
         with tab1:
             # Table 01: Descriptives IMC
             desc = load_table('01_desc_imc.csv')
+            if desc is None or desc.empty:
+                # Créer les données à partir du DataFrame
+                if 'imc' in df.columns:
+                    desc_data = df['imc'].describe()
+                    desc = pd.DataFrame({
+                        'Statistique': desc_data.index,
+                        'Valeur': desc_data.values
+                    })
             display_table_with_insight(
                 desc,
                 "Statistiques descriptives de l'IMC",
@@ -416,8 +395,7 @@ def main():
             display_table_with_insight(
                 milieu,
                 "IMC par milieu de résidence",
-                "Les femmes urbaines ont un IMC moyen (25.6) significativement plus élevé que les rurales (23.4). "
-                "L'écart-type plus important en milieu urbain indique une plus grande disparité."
+                "Les femmes urbaines ont un IMC moyen (25.6) significativement plus élevé que les rurales (23.4)."
             )
             
             # Table 03: IMC par éducation
@@ -425,8 +403,7 @@ def main():
             display_table_with_insight(
                 edu,
                 "IMC par niveau d'éducation",
-                "L'IMC augmente avec le niveau d'éducation, passant de 23.3 (Aucun) à 26.0 (Supérieur). "
-                "Cela reflète le gradient socio-économique."
+                "L'IMC augmente avec le niveau d'éducation, passant de 23.3 (Aucun) à 26.0 (Supérieur)."
             )
             
             # Table 04: IMC par richesse
@@ -434,8 +411,7 @@ def main():
             display_table_with_insight(
                 rich,
                 "IMC par quintile de richesse",
-                "Gradient socio-économique très net : l'IMC passe de 22.6 (plus pauvre) à 26.3 (plus riche). "
-                "Cet écart de près de 4 kg/m² est cliniquement significatif."
+                "Gradient socio-économique très net : l'IMC passe de 22.6 (plus pauvre) à 26.3 (plus riche)."
             )
         
         with tab2:
@@ -446,7 +422,6 @@ def main():
             except:
                 st.warning("Image fig1_hist_imc.png non trouvée")
             
-            st.markdown("### Distribution des classes IMC")
             try:
                 st.image('figures/fig5_dist_classes.png', use_container_width=True)
                 st.caption("Répartition des classes IMC")
@@ -455,19 +430,18 @@ def main():
         
         with tab3:
             st.markdown("### Toutes les tables descriptives")
-            table_files = ['01_desc_imc.csv', '02_imc_par_milieu.csv', '03_imc_par_education.csv', '04_imc_par_richesses.csv']
-            for f in table_files:
+            for f in ['01_desc_imc.csv', '02_imc_par_milieu.csv', '03_imc_par_education.csv', '04_imc_par_richesses.csv']:
                 data = load_table(f)
                 if data is not None:
                     st.markdown(f"#### {f.replace('.csv', '').replace('_', ' ').title()}")
                     st.dataframe(data)
                     st.divider()
     
-    # Section: Analyse Bivariée
-    elif selected_section == " Analyse Bivariée":
-        st.markdown('<div class="section-header"> Analyse Bivariée</div>', unsafe_allow_html=True)
+    # --- SECTION: ANALYSE BIVARIÉE ---
+    elif selected_section == "📈 Analyse Bivariée":
+        st.markdown('<div class="section-header">📈 Analyse Bivariée</div>', unsafe_allow_html=True)
         
-        tab1, tab2 = st.tabs([" Visualisations", " Tables"])
+        tab1, tab2 = st.tabs(["📊 Visualisations", "📋 Tables"])
         
         with tab1:
             st.markdown("### Boxplots par variables clés")
@@ -501,43 +475,31 @@ def main():
             - **Regarde TV** : +0.22 (sédentarité)
             - **Éducation** : +0.20
             """)
-   # Section: Tests d'Hypothèses
-    elif selected_section == " Tests d'Hypothèses":
-        st.markdown('<div class="section-header"> Tests d\'Hypothèses</div>', unsafe_allow_html=True)
-
-        # Table 05: Tests d'hypothèses
-        try:
-            tests_data = load_json('tables/05_tests_hypotheses.json')  #  chemin explicite
-        except FileNotFoundError:
-            st.error("❌ Fichier 05_tests_hypotheses.json introuvable")
-            tests_data = None
-
+    
+    # --- SECTION: TESTS D'HYPOTHÈSES ---
+    elif selected_section == "🔬 Tests d'Hypothèses":
+        st.markdown('<div class="section-header">🔬 Tests d\'Hypothèses</div>', unsafe_allow_html=True)
+        
+        tests_data = load_json('05_tests_hypotheses.json')
+        
         if tests_data:
             st.markdown("### Synthèse des tests statistiques")
             
-            def format_value(val, fmt="{:.4f}"):
-                """Formate val si c'est un nombre, sinon renvoie la chaîne brute."""
-                if isinstance(val, (int, float)):
-                    return fmt.format(val)
-                return str(val)
-
-            # Construction du DataFrame
             test_df = pd.DataFrame([
                 {
                     'Test': k.replace('_', ' ').title(),
-                    'Statistique': format_value(v.get('statistic', v.get('correlation', '—')), "{:.4f}"),
-                    'p-value': format_value(v.get('p_value', '—'), "{:.2e}"),
+                    'Statistique': f"{v.get('statistic', v.get('correlation', '—')):.4f}",
+                    'p-value': f"{v.get('p_value', 0):.2e}",
                     'Significatif': v.get('p_value', 1) < 0.05
                 }
                 for k, v in tests_data.items() if 'p_value' in v
             ])
-
+            
             st.dataframe(test_df, use_container_width=True)
             
-            #  Interprétation synthétique
             st.markdown("""
             <div class="insight-box">
-                <strong> Interprétation :</strong><br>
+                <strong>💡 Interprétation :</strong><br>
                 • <strong>Shapiro-Wilk</strong> : Rejet de la normalité (p < 0.001)<br>
                 • <strong>t-test Urbain/Rural</strong> : Différence très significative (p < 0.001)<br>
                 • <strong>ANOVA Richesse</strong> : Effet très significatif (p < 0.001)<br>
@@ -546,9 +508,8 @@ def main():
                 • <strong>Chi² IMC×Milieu</strong> : Association très significative
             </div>
             """, unsafe_allow_html=True)
-
-        #  Détail des tests
-        with st.expander(" Détail des tests"):
+        
+        with st.expander("📊 Détail des tests"):
             if tests_data:
                 for key, value in tests_data.items():
                     st.markdown(f"**{key.replace('_', ' ').title()}**")
@@ -559,51 +520,39 @@ def main():
                     if 'p_value' in value:
                         st.write(f"- p-value : {value['p_value']:.2e}")
                     st.divider()
-
-                # Section: Analyse Multivariée
-    elif selected_section == "Analyse Multivariée":
-        st.markdown('<div class="section-header">Analyse Multivariée</div>', unsafe_allow_html=True)
-
-        tab1, tab2, tab3 = st.tabs(["ACP & Clusters", "Régressions", "Tables"])
-
+    
+    # --- SECTION: ANALYSE MULTIVARIÉE ---
+    elif selected_section == "🎯 Analyse Multivariée":
+        st.markdown('<div class="section-header">🎯 Analyse Multivariée</div>', unsafe_allow_html=True)
+        
+        tab1, tab2, tab3 = st.tabs(["🔍 ACP & Clusters", "📊 Régressions", "📋 Tables"])
+        
         with tab1:
             # Table 07: PCA variance
-            pca_var = load_table('tables/07_pca_variance.csv')
+            pca_var = load_table('07_pca_variance.csv')
             display_table_with_insight(
                 pca_var,
                 "Variance expliquée par l'ACP",
                 "Les 8 premières composantes expliquent 86% de la variance totale. "
                 "Les deux premiers axes (CP1: 35.6%, CP2: 13.4%) résument les dimensions socio-économique et démographique."
             )
-
+            
             # Table 11: K-means profils
-            kmeans_profils = load_table('tables/11_kmeans_profils.csv')
+            kmeans_profils = load_table('11_kmeans_profils.csv')
             display_table_with_insight(
                 kmeans_profils,
                 "Profils des clusters K-Means (k=4)",
                 "Quatre profils distincts : jeunes urbaines éduquées (Cluster 0), adultes mixtes (Cluster 1), "
                 "rurales peu éduquées (Cluster 2), urbaines aisées (Cluster 3)."
             )
-
+            
             st.markdown("### Visualisations ACP et Clusters")
-            try:
-                st.image('figures/fig6_pca.png', use_container_width=True)
-                st.caption("Cercle des corrélations et scree plot")
-            except Exception:
-                st.warning("Image fig6_pca.png non trouvée")
-
-            try:
-                st.image('figures/fig7_kmeans_choix.png', use_container_width=True)
-                st.caption("Méthode du coude et silhouette pour déterminer k")
-            except Exception:
-                st.warning("Image fig7_kmeans_choix.png non trouvée")
-
-            try:
-                st.image('figures/fig8_clusters_acp.png', use_container_width=True)
-                st.caption("Projection des clusters dans le plan ACP")
-            except Exception:
-                st.warning("Image fig8_clusters_acp.png non trouvée")
-
+            for fig in ['fig6_acp.png', 'fig7_kmeans_choix.png', 'fig8_clusters_acp.png']:
+                try:
+                    st.image(f'figures/{fig}', use_container_width=True)
+                except:
+                    st.warning(f"Image {fig} non trouvée")
+        
         with tab2:
             # Table 08: PLS coefficients
             pls_coefs = load_table('08_pls_coefs.csv')
@@ -612,7 +561,7 @@ def main():
                 "Coefficients PLS",
                 "La PLS confirme l'importance de l'âge, de la richesse et des médias dans la prédiction de l'IMC."
             )
-
+            
             # Table 09b: OLS coefficients
             ols_coefs = load_table('09b_ols_coefs.csv')
             display_table_with_insight(
@@ -621,7 +570,7 @@ def main():
                 "Âge (+0.13), richesse (+0.78) et regarde TV (+0.51) augmentent l'IMC. "
                 "Lit journal (−0.53) et milieu rural (−0.31) le diminuent."
             )
-
+            
             # Table 10: Logit odds ratios
             logit_or = load_table('10_logit_odds_ratios.csv')
             display_table_with_insight(
@@ -630,33 +579,26 @@ def main():
                 "L'âge, la richesse et l'éducation augmentent les chances d'être dans une catégorie d'IMC plus élevée. "
                 "Le milieu rural réduit ces chances."
             )
-
+        
         with tab3:
             st.markdown("### Tables de l'analyse multivariée")
-            table_files = [
-                '06_vif.csv',
-                '07_pca_variance.csv',
-                '08_pls_coefs.csv',
-                '09b_ols_coefs.csv',
-                '10_logit_odds_ratios.csv',
-                '11_kmeans_profils.csv'
-            ]
+            table_files = ['06_vif.csv', '07_pca_variance.csv', '08_pls_coefs.csv', 
+                          '09b_ols_coefs.csv', '10_logit_odds_ratios.csv', '11_kmeans_profils.csv']
             for f in table_files:
                 data = load_table(f)
                 if data is not None:
                     st.markdown(f"#### {f.replace('.csv', '').replace('_', ' ').title()}")
                     st.dataframe(data)
                     st.divider()
-
-    # Section: Modèles ML
-    elif selected_section == "Modèles ML":
-        st.markdown('<div class="section-header">Modèles de Machine Learning</div>', unsafe_allow_html=True)
-
-        # Afficher les modèles disponibles
+    
+    # --- SECTION: MODÈLES ML ---
+    elif selected_section == "🤖 Modèles ML":
+        st.markdown('<div class="section-header">🤖 Modèles de Machine Learning</div>', unsafe_allow_html=True)
+        
         display_model_info()
-
-        tab1, tab2, tab3 = st.tabs(["Performance", "Importance", "Tables"])
-
+        
+        tab1, tab2, tab3 = st.tabs(["📊 Performance", "📈 Importance", "📋 Tables"])
+        
         with tab1:
             # Table 14: Classification results
             class_results = load_table('14_classification_results.csv')
@@ -666,7 +608,7 @@ def main():
                 "XGBoost (F1=0.519) et Random Forest (F1=0.515) sont les meilleurs modèles. "
                 "Le Random Forest optimisé atteint F1=0.534."
             )
-
+            
             # Table 15: Confusion matrix
             conf_matrix = load_table('15_confusion_matrix.csv')
             display_table_with_insight(
@@ -675,7 +617,6 @@ def main():
                 "La classe 'Normal' est la mieux prédite (74% de recall). "
                 "La classe 'Maigreur' reste difficile à prédire en raison de sa rareté."
             )
-
             
             # Table 16: Classification report
             class_report = load_text('16_classification_report.txt')
@@ -684,17 +625,11 @@ def main():
                 st.code(class_report, language='text')
             
             st.markdown("### Visualisations")
-            try:
-                st.image('figures/fig9_confusion.png', use_container_width=True)
-                st.caption("Matrice de confusion - Random Forest optimisé")
-            except:
-                st.warning("Image fig9_confusion.png non trouvée")
-            
-            try:
-                st.image('figures/fig11_models_comparison.png', use_container_width=True)
-                st.caption("Comparaison des 10 modèles ML (F1 score)")
-            except:
-                st.warning("Image fig11_models_comparison.png non trouvée")
+            for fig in ['fig9_confusion.png', 'fig11_models_comparison.png']:
+                try:
+                    st.image(f'figures/{fig}', use_container_width=True)
+                except:
+                    st.warning(f"Image {fig} non trouvée")
         
         with tab2:
             # Table 17: Feature importance
@@ -723,22 +658,18 @@ def main():
                     st.dataframe(data)
                     st.divider()
     
-    # Section: Prédiction
-    elif selected_section == " Prédiction":
-        st.markdown('<div class="section-header"> Prédiction de la Classe IMC</div>', unsafe_allow_html=True)
+    # --- SECTION: PRÉDICTION ---
+    elif selected_section == "📋 Prédiction":
+        st.markdown('<div class="section-header">📋 Prédiction de la Classe IMC</div>', unsafe_allow_html=True)
         
-        # Afficher le modèle utilisé
         st.markdown("""
         <div class="insight-box">
-            <strong> Modèle utilisé :</strong> Random Forest optimisé 
+            <strong>🤖 Modèle utilisé :</strong> Random Forest optimisé 
             <span class="model-badge">F1: 0.534</span>
         </div>
         """, unsafe_allow_html=True)
         
-        st.markdown("""
-        ### Entrez les caractéristiques de la patiente
-        Renseignez les informations ci-dessous pour prédire la classe IMC.
-        """)
+        st.markdown("### Entrez les caractéristiques de la patiente")
         
         col1, col2 = st.columns(2)
         
@@ -759,7 +690,6 @@ def main():
         education_enc = edu_map[education]
         travail_enc = 1 if travail == "Oui" else 0
         
-        # Charger le modèle
         model = load_model('best_model_compact.pkl')
         scaler = load_model('scaler.pkl')
         
@@ -767,45 +697,31 @@ def main():
             if model is not None:
                 with st.spinner("Prédiction en cours..."):
                     features = ['age', 'milieu', 'education', 'richesse_score', 'annees_education_unique', 'taille_menage']
-                    
-                    # Préparer les données
                     X_pred = pd.DataFrame([[age, milieu_enc, education_enc, 3, annees_etudes, taille_menage]], 
                                           columns=features)
                     
-                    # Normaliser si scaler disponible
                     if scaler is not None:
                         X_pred_scaled = scaler.transform(X_pred)
                     else:
                         X_pred_scaled = X_pred.values
                     
-                    # Prédiction
                     pred = model.predict(X_pred_scaled)
-                    
-                    # Classes
                     classes = ['Maigreur', 'Normal', 'Surpoids', 'Obésité']
                     class_name = classes[pred[0]]
                     probas = model.predict_proba(X_pred_scaled)[0]
                     proba = max(probas) * 100
                     
-                    colors = {
-                        'Maigreur': '#e74c3c',
-                        'Normal': '#2ecc71',
-                        'Surpoids': '#f1c40f',
-                        'Obésité': '#e67e22'
-                    }
+                    colors = {'Maigreur': '#e74c3c', 'Normal': '#2ecc71', 'Surpoids': '#f1c40f', 'Obésité': '#e67e22'}
                     
                     st.markdown(f"""
                     <div class="result-box" style="border-left-color: {colors.get(class_name, '#3498db')};">
                         <h2 style="color: {colors.get(class_name, '#3498db')};">
-                             Classe IMC prédite : <strong>{class_name}</strong>
+                            🏷️ Classe IMC prédite : <strong>{class_name}</strong>
                         </h2>
-                        <p style="font-size: 1.2rem; color: #2c3e50;">
-                            Confiance : {proba:.1f}%
-                        </p>
+                        <p style="font-size: 1.2rem; color: #2c3e50;">Confiance : {proba:.1f}%</p>
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    # Distribution des probabilités
                     fig, ax = plt.subplots(figsize=(8, 4))
                     ax.bar(classes, probas, color=['#e74c3c', '#2ecc71', '#f1c40f', '#e67e22'])
                     ax.set_ylabel('Probabilité')
@@ -815,28 +731,19 @@ def main():
                         ax.text(i, v + 0.02, f'{v*100:.1f}%', ha='center', fontsize=10)
                     st.pyplot(fig)
                     plt.close()
-                    
-                    # Informations supplémentaires
-                    st.markdown("####  Interprétation des résultats")
-                    
-                    if class_name == 'Maigreur':
-                        st.warning("⚠️ Cette patiente est classée en **maigreur**. Un suivi nutritionnel est recommandé.")
-                    elif class_name == 'Normal':
-                        st.success(" Cette patiente présente un **IMC normal**. Maintenir un mode de vie sain.")
-                    elif class_name == 'Surpoids':
-                        st.warning("⚠️ Cette patiente est en **surpoids**. Une attention particulière à l'alimentation et l'activité physique est conseillée.")
-                    else:
-                        st.error("🔴 Cette patiente est en situation d'**obésité**. Une prise en charge médicale est recommandée.")
             else:
                 st.error("❌ Modèle non disponible. Veuillez vérifier le fichier 'best_model_compact.pkl'.")
     
-    
-    # Pied de page
-st.markdown("""
-    <div style="text-align:center; margin-top:30px; font-size:14px; color:gray;">
-        Modèles : Random Forest (F1: 0.534) • Régression Logistique Ordinale (AIC: 38.2)
+    # --- Pied de page ---
+    st.markdown("""
+    <div class="footer">
+        <p>📊 Étude de la Malnutrition au Cameroun — Données DHS 2018</p>
+        <p style="font-size: 0.8rem;">Développé avec Streamlit • Analyse statistique et Machine Learning</p>
+        <p style="font-size: 0.7rem; color: #95a5a6;">
+            Modèles : Random Forest (F1: 0.534) • Régression Logistique Ordinale (AIC: 38.2)
+        </p>
     </div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
